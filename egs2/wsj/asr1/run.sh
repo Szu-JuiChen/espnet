@@ -11,6 +11,9 @@ test_sets="test_dev93 test_eval92"
 
 ./asr.sh \
     --lang "en" \
+    --ngpu 8 \
+    --inference_nj 16 \
+    --feats_normalize uttmvn \
     --use_lm true \
     --token_type char \
     --nbpe 80 \

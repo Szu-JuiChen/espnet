@@ -63,6 +63,8 @@ class ESPnetASRModel(AbsESPnetModel):
         sym_space: str = "<space>",
         sym_blank: str = "<blank>",
         extract_feats_in_collect_stats: bool = True,
+        corr_weight: float = 0.0,
+        band_pass: bool = False,
     ):
         assert check_argument_types()
         assert 0.0 <= ctc_weight <= 1.0, ctc_weight
@@ -145,6 +147,11 @@ class ESPnetASRModel(AbsESPnetModel):
 
         self.extract_feats_in_collect_stats = extract_feats_in_collect_stats
 
+        # Add correlation loss
+        assert 0.0 <= corr_weight <= 1.0, corr_weight
+        self.corr_weight = corr_weight
+        self.band_pass = band_pass
+
     def forward(
         self,
         speech: torch.Tensor,
@@ -174,7 +181,10 @@ class ESPnetASRModel(AbsESPnetModel):
         text = text[:, : text_lengths.max()]
 
         # 1. Encoder
-        encoder_out, encoder_out_lens = self.encode(speech, speech_lengths)
+        if self.corr_weight != 0.0:
+            encoder_out, encoder_out_lens, corr_mat = self.encode(speech, speech_lengths)
+        else:
+            encoder_out, encoder_out_lens = self.encode(speech, speech_lengths)
 
         loss_att, acc_att, cer_att, wer_att = None, None, None, None
         loss_ctc, cer_ctc = None, None
@@ -216,11 +226,27 @@ class ESPnetASRModel(AbsESPnetModel):
                 loss = loss_ctc
             else:
                 loss = self.ctc_weight * loss_ctc + (1 - self.ctc_weight) * loss_att
-
+            # 4. CTC-Att-Corr loss definition
+            loss_corr = None
+            if self.corr_weight != 0.0:
+                loss_corr = 0
+                for mat in corr_mat:
+                    if not self.band_pass:
+                        mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0) # marginal parameter for smoother loss
+                        loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
+                    else:
+                        mat.masked_fill_(mat.ge(-0.4) * mat.le(0.4), 0).masked_fill_(mat.ge(0.8), 0).masked_fill_(mat.le(-0.8), 0)
+                        loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
+                loss_corr /= len(corr_mat)
+                if not self.band_pass:
+                    loss = loss + self.corr_weight * loss_corr
+                else:
+                    loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
         stats = dict(
             loss=loss.detach(),
             loss_att=loss_att.detach() if loss_att is not None else None,
             loss_ctc=loss_ctc.detach() if loss_ctc is not None else None,
+            loss_corr=loss_corr.detach() if loss_corr is not None else None,
             loss_transducer=loss_transducer.detach()
             if loss_transducer is not None
             else None,
@@ -244,7 +270,10 @@ class ESPnetASRModel(AbsESPnetModel):
         text_lengths: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         if self.extract_feats_in_collect_stats:
-            feats, feats_lengths = self._extract_feats(speech, speech_lengths)
+            if self.corr_weight != 0.0:
+                feats, feats_lengths, _ = self._extract_feats(speech, speech_lengths)
+            else:
+                feats, feats_lengths = self._extract_feats(speech, speech_lengths)
         else:
             # Generate dummy stats if extract_feats_in_collect_stats is False
             logging.warning(
@@ -266,7 +295,10 @@ class ESPnetASRModel(AbsESPnetModel):
         """
         with autocast(False):
             # 1. Extract feats
-            feats, feats_lengths = self._extract_feats(speech, speech_lengths)
+            if self.corr_weight != 0.0:
+                feats, feats_lengths, corr_mat = self._extract_feats(speech, speech_lengths)
+            else:
+                feats, feats_lengths = self._extract_feats(speech, speech_lengths)
 
             # 2. Data augmentation
             if self.specaug is not None and self.training:
@@ -300,6 +332,8 @@ class ESPnetASRModel(AbsESPnetModel):
             encoder_out_lens.max(),
         )
 
+        if self.corr_weight != 0.0:
+            return encoder_out, encoder_out_lens, corr_mat
         return encoder_out, encoder_out_lens
 
     def _extract_feats(
@@ -315,10 +349,15 @@ class ESPnetASRModel(AbsESPnetModel):
             #  e.g. STFT and Feature extract
             #       data_loader may send time-domain signal in this case
             # speech (Batch, NSamples) -> feats: (Batch, NFrames, Dim)
-            feats, feats_lengths = self.frontend(speech, speech_lengths)
+            if self.corr_weight != 0.0:
+                feats, feats_lengths, corr_mat = self.frontend(speech, speech_lengths)
+            else:
+                feats, feats_lengths = self.frontend(speech, speech_lengths)
         else:
             # No frontend and no feature extract
             feats, feats_lengths = speech, speech_lengths
+        if self.corr_weight != 0.0:
+            return feats, feats_lengths, corr_mat
         return feats, feats_lengths
 
     def nll(

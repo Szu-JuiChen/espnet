@@ -244,7 +244,10 @@ class Speech2Text:
         batch = to_device(batch, device=self.device)
 
         # b. Forward Encoder
-        enc, _ = self.asr_model.encode(**batch)
+        if self.asr_train_args.frontend_conf.get('use_corr_loss'):
+            enc, _, _ = self.asr_model.encode(**batch)
+        else:
+            enc, _ = self.asr_model.encode(**batch)
         assert len(enc) == 1, len(enc)
 
         # c. Passed the encoder result and the beam search
