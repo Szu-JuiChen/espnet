@@ -27,7 +27,7 @@ mkdir -p $dir
 
 # make the spkID a prefix of uttID
 cut -d " " -f 1 $json_dir/*transcription* > $dir/text1.tmp #this is the utt id list
-cut -d " " -f 2- $json_dir/*transcription* | sed -e 's/\[unk\]/<unk>/g' | tr '[:upper:]' '[:lower:]' \
+cut -d " " -f 2- $json_dir/*transcription* | tr '[:upper:]' '[:lower:]' \
     > $dir/text2.tmp
 paste -d ' ' $dir/text1.tmp $dir/text2.tmp > $dir/text.tmp
 cut -d " " -f 2 $json_dir/*uttID* > $dir/spk_list.tmp

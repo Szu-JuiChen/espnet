@@ -34,12 +34,14 @@ json_dir=${FEARLESS_STEPS}/Transcripts/ASR_track2
 nlsyms=data/nlsyms.txt
 
 for dataset in Train Dev Eval; do
+    out=$(echo "$dataset" | tr '[:upper:]' '[:lower:]')
     log "local/prepare_data.sh --cleanup $cleanup , preparing ${dataset} set"
-    local/prepare_data.sh --cleanup $cleanup ${audio_dir}/${dataset} ${json_dir}/${dataset} data/${dataset}
+    local/prepare_data.sh --cleanup $cleanup ${audio_dir}/${dataset} ${json_dir}/${dataset} data/${out}
 done
-mv data/Train data/train
-mv data/Dev data/dev
-mv data/Eval data/eval
+
+# remove too short utterence (utt <= 0.15s) in eval set. Total 12 utterences.
+sed -i.bak '/05139/d;/02146/d;/05988/d;/02442/d;/13227/d;/00684/d;/03159/d;/01958/d;/03839/d;/01442/d;/04101/d;/05275/d' data/eval/text
+utils/fix_data_dir.sh data/eval
 
 # upsample audio from 8k to 16k to make a recipe consistent with others
 for x in train dev eval; do
