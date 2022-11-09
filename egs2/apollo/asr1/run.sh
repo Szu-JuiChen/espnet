@@ -10,7 +10,7 @@ valid_set="dev"
 test_sets="dev eval"
 bpe_nlsyms="[vocalization],[unk]"
 
-asr_config=conf/tuning/train_asr_conformer_s3prlfrontend_hubert_lr0.002_warm1w.yaml
+asr_config=conf/tuning/train_asr_transformer2.yaml
 lm_config=conf/tuning/train_lm_transformer2.yaml
 inference_config=conf/decode.yaml
 
