@@ -235,13 +235,14 @@ class ESPnetASRModel(AbsESPnetModel):
                         mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0) # marginal parameter for smoother loss
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                     else:
-                        mat.masked_fill_(mat.ge(-0.4) * mat.le(0.4), 0).masked_fill_(mat.ge(0.8), 0).masked_fill_(mat.le(-0.8), 0)
+                        #mat.masked_fill_(mat.ge(-0.4) * mat.le(0.4), 0).masked_fill_(mat.ge(0.8), 0).masked_fill_(mat.le(-0.8), 0)
+                        mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0)
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                 loss_corr /= len(corr_mat)
                 if not self.band_pass:
-                    loss = loss + self.corr_weight * loss_corr
-                else:
                     loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
+                else: # corr loss is separate from asr loss
+                    loss = loss + self.corr_weight * loss_corr
         stats = dict(
             loss=loss.detach(),
             loss_att=loss_att.detach() if loss_att is not None else None,

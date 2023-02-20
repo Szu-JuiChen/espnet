@@ -7,11 +7,15 @@ import numpy as np
 import torch
 from typeguard import check_argument_types
 from typing import Tuple
-
+# for transformer layer
+#from espnet2.asr.encoder.transformer_encoder import TransformerEncoder
+#from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling2
+#import argparse
 
 class FusedFrontends(AbsFrontend):
     def __init__(
-        self, frontends=None, align_method="linear_projection", proj_dim=100, fs=16000, use_corr_loss=False 
+        self, frontends=None, align_method="linear_projection", proj_dim=100, fs=16000, use_corr_loss=False, multi_layer=False
+#proj_conf=argparse.Namespace # for transformer layer
     ):
 
         assert check_argument_types()
@@ -24,6 +28,8 @@ class FusedFrontends(AbsFrontend):
         self.frontends = []  # list of the frontends to combine
         self.corr_mat = [] # correlation matrix of two input features
         self.use_corr_loss = use_corr_loss
+        self.multi_layer = multi_layer
+        #self.proj_conf = proj_conf # for transformer layer
         if align_method == "wsum":
             num_front = len(frontends)
             if num_front > 1: # in case users use one frontend with fused
@@ -34,6 +40,7 @@ class FusedFrontends(AbsFrontend):
             self.weights = torch.tensor(self.weights)
             self.weights = torch.nn.ParameterList(torch.nn.Parameter(i) for i in self.weights)
 
+        merging_list = []
         for i, frontend in enumerate(frontends):
             frontend_type = frontend["frontend_type"]
             if frontend_type == "default":
@@ -78,8 +85,11 @@ class FusedFrontends(AbsFrontend):
                 frontend_conf, download_dir, multilayer_feature = (
                     frontend.get("frontend_conf"),
                     frontend.get("download_dir"),
-                    frontend.get("multilayer_feature"),
+                    frontend.get("multilayer_feature", False),
                 )
+                #if frontend.get("multilayer_cross_feature"):
+                #    merging_list.append([frontend_conf, download_dir])
+                #else:    
                 self.frontends.append(
                     S3prlFrontend(
                         fs=fs,
@@ -97,24 +107,57 @@ class FusedFrontends(AbsFrontend):
         self.gcd = np.gcd.reduce([frontend.hop_length for frontend in self.frontends])
         self.factors = [frontend.hop_length // self.gcd for frontend in self.frontends]
         if self.align_method != "concat":
-            self.projection_layers = [
-                torch.nn.Linear(
-                    in_features=frontend.output_size(),
-                    out_features=self.factors[i] * self.proj_dim,
-                )
-                for i, frontend in enumerate(self.frontends)
-            ]
+            #if self.multi_layer4:
+            #    self.projection_layers = [
+            #        torch.nn.Sequential(
+            #            torch.nn.Linear(in_features=frontend.output_size(), out_features=256,),
+            #            torch.nn.GELU(),
+            #            torch.nn.Linear(in_features=256, out_features=256,),
+            #            torch.nn.GELU(),
+            #            torch.nn.Linear(in_features=256, out_features=256,),
+            #            torch.nn.GELU(),
+            #            torch.nn.Linear(in_features=256, out_features=self.proj_dim,)
+            #        )
+            #        for frontend in self.frontends
+            #    ]
+            if self.multi_layer:
+                self.projection_layers = [
+                    torch.nn.Sequential(
+                        torch.nn.Linear(in_features=frontend.output_size(), out_features=256,),
+                        torch.nn.GELU(),
+                        torch.nn.Linear(in_features=256, out_features=256,),
+                        torch.nn.GELU(),
+                        torch.nn.Linear(in_features=256, out_features=self.proj_dim,)
+                    )
+                    for frontend in self.frontends
+                ]
+            else:
+                # for transformer layer
+                #self.projection_layers2 = [
+                #    TransformerEncoder(
+                #        input_size=frontend.output_size(), **self.proj_conf
+                #    )
+                #    for i, frontend in enumerate(self.frontends)
+                #]
+                self.projection_layers = [
+                    torch.nn.Linear(
+                        in_features=frontend.output_size(),
+                        out_features=self.factors[i] * self.proj_dim,
+                    )
+                    for i, frontend in enumerate(self.frontends)
+                ]
             self.projection_layers = torch.nn.ModuleList(self.projection_layers)
-    # if no preencoder in conf, this function will retunr the wrong output_size.
+            #self.projection_layers2 = torch.nn.ModuleList(self.projection_layers2) # for transformer layer
+    # if no preencoder in conf, this function will return the wrong output_size. See espnet/espnet2/task/asr.py line 404.
     # TODO: return by align_method
     def output_size(self) -> int:
         return len(self.frontends) * self.proj_dim
     
-    def reload_pretrained_parameters(self):
-        for i, frontend in enumerate(self.frontends):
-            pretrained_params = frontend.pretrained_params
-            frontend.upstream.load_state_dict(pretrained_params)
-            logging.info(f"Pretrained S3PRL frontend model {frontend.args.upstream} parameters reloaded!")
+    #def reload_pretrained_parameters(self):
+    #    for i, frontend in enumerate(self.frontends):
+    #        pretrained_params = frontend.pretrained_params
+    #        frontend.upstream.load_state_dict(pretrained_params)
+    #        logging.info(f"Pretrained S3PRL frontend model {frontend.args.upstream} parameters reloaded!")
 
     def forward(
         self, input: torch.Tensor, input_lengths: torch.Tensor
@@ -136,11 +179,10 @@ class FusedFrontends(AbsFrontend):
             #self.correlation_matrix(self.feats[0][0], self.feats[1][0]) # for plot
             for i, frontend in enumerate(self.frontends):
                 input_feats = self.feats[i][0]
+                #ilens = self.feats[i][1] # for transformer layer
+                #self.feats_proj.append(self.projection_layers[i](input_feats, ilens)[0]) # for transformer layer
                 self.feats_proj.append(self.projection_layers[i](input_feats))
             #self.correlation_matrix(self.feats_proj[0], self.feats_proj[1]) # for plot
-            if self.use_corr_loss:
-                self.corr_mat = []
-                self.correlation_matrix(self.feats_proj[0], self.feats_proj[1])
             # 2nd step : reshape
             self.feats_reshaped = []
             for i, frontend in enumerate(self.frontends):
@@ -151,7 +193,9 @@ class FusedFrontends(AbsFrontend):
                 )
                 input_feats_reshaped = input_feats_reshaped.permute(0,2,1)
                 self.feats_reshaped.append(input_feats_reshaped)
-
+            if self.use_corr_loss:
+                self.corr_mat = []
+                self.correlation_matrix(self.feats_reshaped[0], self.feats_reshaped[1])
             # 3th step : normalize by frontend
             self.feats_normalized = []
             for i, _ in enumerate(self.frontends):
@@ -188,8 +232,10 @@ class FusedFrontends(AbsFrontend):
             #self.corr_mat = [] # for plot
             #self.correlation_matrix(self.feats[0][0], self.feats[1][0]) # for plot
             for i, frontend in enumerate(self.frontends):
+                #logging.info(f"feats shape: {self.feats[i][0].shape}")
                 input_feats = self.feats[i][0]
                 self.feats_proj.append(self.projection_layers[i](input_feats))
+                #logging.info(f"feats_proj shape: {self.feats_proj[-1].shape}")
             #self.correlation_matrix(self.feats_proj[0], self.feats_proj[1]) # for plot
             # 2nd step : downsample
             self.feats_reshaped = []
@@ -201,7 +247,10 @@ class FusedFrontends(AbsFrontend):
                 )
                 input_feats_reshaped = input_feats_reshaped.permute(0,2,1)
                 self.feats_reshaped.append(input_feats_reshaped)
-
+                #logging.info(f"feats_reshaped shape: {self.feats_reshaped[-1].shape}")
+            if self.use_corr_loss:
+                self.corr_mat = []
+                self.correlation_matrix(self.feats_reshaped[0], self.feats_reshaped[1])
             # 3nd step : normalize by frontend
             self.feats_normalized = []
             for i, _ in enumerate(self.frontends):
