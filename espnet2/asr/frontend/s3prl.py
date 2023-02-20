@@ -20,6 +20,7 @@ class S3prlFrontend(AbsFrontend):
         frontend_conf: Optional[dict] = get_default_kwargs(Frontend),
         download_dir: str = None,
         multilayer_feature: bool = False,
+        multilayer_cross_feature: bool = False,
         layer: int = -1,
     ):
         try:
