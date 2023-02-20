@@ -17,7 +17,6 @@ class FusedFrontends(AbsFrontend):
         self, frontends=None, align_method="linear_projection", proj_dim=100, fs=16000, use_corr_loss=False, multi_layer=False
 #proj_conf=argparse.Namespace # for transformer layer
     ):
-
         assert check_argument_types()
         super().__init__()
         self.align_method = (
@@ -162,7 +161,6 @@ class FusedFrontends(AbsFrontend):
     def forward(
         self, input: torch.Tensor, input_lengths: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
-
         # step 0 : get all frontends features
         self.feats = []
         for frontend in self.frontends:
@@ -172,7 +170,6 @@ class FusedFrontends(AbsFrontend):
         if (
             self.align_method == "linear_projection"
         ):  # TODO(Dan): to add other align methods
-
             # first step : projections
             self.feats_proj = []
             #self.corr_mat = [] # for plot

@@ -6,15 +6,15 @@
 #  Apache 2.0  (http://www.apache.org/licenses/LICENSE-2.0)
 
 import importlib
+import os
 import shutil
 import sys
 
-from distutils.version import LooseVersion
+from packaging.version import parse
 
 module_list = [
     ("torchaudio", None, None),
     ("torch_optimizer", None, None),
-    ("warpctc_pytorch", None, "installers/install_warp-ctc.sh"),
     ("warprnnt_pytorch", None, "installers/install_warp-transducer.sh"),
     ("chainer_ctc", None, "installers/install_chainer_ctc.sh"),
     ("pyopenjtalk", None, "installers/install_pyopenjtalk.sh"),
@@ -22,12 +22,21 @@ module_list = [
     ("kenlm", None, "installers/install_kenlm.sh"),
     ("mmseg", None, "installers/install_py3mmseg.sh"),
     ("espnet", None, None),
+    ("numpy", None, None),
     ("fairseq", None, "installers/install_fairseq.sh"),
     ("phonemizer", None, "installers/install_phonemizer.sh"),
     ("gtn", None, "installers/install_gtn.sh"),
     ("s3prl", None, "installers/install_s3prl.sh"),
     ("transformers", None, "installers/install_transformers.sh"),
+    ("speechbrain", None, "installers/install_speechbrain.sh"),
     ("k2", None, "installers/install_k2.sh"),
+    ("longformer", None, "installers/install_longformer.sh"),
+    ("nlg-eval", None, "installers/install_longformer.sh"),
+    ("datasets", None, "installers/install_longformer.sh"),
+    ("pykeops", None, "installers/install_cauchy_mult.sh"),
+    ("whisper", None, "installers/install_whisper.sh"),
+    ("RawNet3", None, "installers/install_rawnet.sh"),
+    ("reazonspeech", None, "installers/install_reazonspeech.sh"),
 ]
 
 executable_list = [
@@ -73,7 +82,7 @@ def main():
         import chainer
 
         print(f"[x] chainer={chainer.__version__}")
-        if LooseVersion(chainer.__version__) != LooseVersion("6.0.0"):
+        if parse(chainer.__version__) != parse("6.0.0"):
             print(
                 f"Warning! chainer={chainer.__version__} is not supported. "
                 "Supported version is 6.0.0"
@@ -123,6 +132,13 @@ def main():
             print(f"[ ] {name}")
             if installer is not None:
                 to_install.append(f"Use '{installer}' to install {name}")
+
+    # check muskits install
+    if os.path.exists("muskits.done"):
+        print(f"[x] muskits")
+    else:
+        print(f"[ ] muskits")
+        to_install.append(f"Use 'installers/install_muskits.sh' to install muskits")
 
     print()
     print("Executables:")

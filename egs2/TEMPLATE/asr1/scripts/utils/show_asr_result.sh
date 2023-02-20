@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 mindepth=0
-maxdepth=1
+maxdepth=10
 
 . utils/parse_options.sh
 
@@ -44,8 +44,17 @@ cat << EOF
 EOF
 
 while IFS= read -r expdir; do
-    if ls "${expdir}"/*/*/score_*/result.txt &> /dev/null; then
-        echo "## $(basename ${expdir})"
+    
+      if ls "${expdir}"/*/*/result.sum &> /dev/null; then
+	echo "## ${expdir}"
+	cat << EOF
+|dataset|ROUGE-1|ROUGE-2|ROUGE-L|METEOR|BERTScore|
+|---|---|---|---|---|---|
+EOF
+	grep -H -e "RESULT" "${expdir}"/*/*/result.sum | sed 's=RESULT==g' |  cut -d ' ' -f 1,2- | tr ' ' '|'
+	echo  
+      elif ls "${expdir}"/*/*/score_*/result.txt &> /dev/null; then
+        echo "## ${expdir}"
         for type in wer cer ter; do
                 	cat << EOF
 ### ${type^^}
@@ -53,7 +62,7 @@ while IFS= read -r expdir; do
 |dataset|Snt|Wrd|Corr|Sub|Del|Ins|Err|S.Err|
 |---|---|---|---|---|---|---|---|---|
 EOF
-		if  [[ $type == "wer" ]] && [[ -n $(ls ${expdir}/*/*/score_wer/scoring/*.filt.sys) ]] ; then
+		if  [[ $type == "wer" ]] && ls "${expdir}/*/*/score_wer/scoring/*.filt.sys"  &> /dev/null; then
 	    		## If STM used for HUBSCR based scoring, the *.sys files have the WER, not result.txt or result.wrd.txt
             		grep -H -e Sum/Avg "${expdir}"/*/*/score_wer/scoring/*.filt.sys \
 				| sed -e "s#${expdir}/\([^/]*/[^/]*\)/score_wer/scoring/\([[:graph:]]*\):#|\1/\2#g" \

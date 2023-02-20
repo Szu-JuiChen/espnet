@@ -1,11 +1,5 @@
 import logging
-from typing import Any
-from typing import Dict
-from typing import Iterator
-from typing import List
-from typing import Sequence
-from typing import Tuple
-from typing import Union
+from typing import Any, Dict, Iterator, List, Sequence, Tuple, Union
 
 import numpy as np
 import torch
@@ -124,7 +118,9 @@ class ChunkIterFactory(AbsIterFactory):
             id_ = ids[0]
 
             for key in sequence_keys:
-                if len(batch[key]) != len(batch[sequence_keys[0]]):
+                if len(batch[key]) != len(
+                    batch[sequence_keys[0]]
+                ) and not key.startswith("enroll_ref"):
                     raise RuntimeError(
                         f"All sequences must has same length: "
                         f"{len(batch[key])} != {len(batch[sequence_keys[0]])}"
@@ -160,7 +156,23 @@ class ChunkIterFactory(AbsIterFactory):
                     cache_chunks[k] = []
                 if k in sequence_keys:
                     # Shift chunks with overlapped length for data augmentation
-                    cache_chunks[k] += [v[Z + i * S : Z + i * S + W] for i in range(N)]
+                    if k.startswith("enroll_ref"):
+                        is_spk_embedding = v.ndim == 2 and v.shape[0] == 1
+                        for i in range(N):
+                            if is_spk_embedding:
+                                cache_chunks[k].append(v)
+                            else:
+                                start = 0 if len(v) <= W else state.randint(len(v) - W)
+                                pad_right = W - len(v) if len(v) <= W else 0
+                                cache_chunks[k].append(
+                                    torch.nn.functional.pad(
+                                        v[start : start + W], (0, pad_right)
+                                    )
+                                )
+                    else:
+                        cache_chunks[k] += [
+                            v[Z + i * S : Z + i * S + W] for i in range(N)
+                        ]
                 else:
                     # If not sequence, use whole data instead of chunk
                     cache_chunks[k] += [v for _ in range(N)]

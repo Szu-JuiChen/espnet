@@ -1,7 +1,7 @@
 num_workers: 8
 batch_type: numel
-batch_bins: 4000000
-accum_grad: 4
+batch_bins: 8000000
+accum_grad: 2
 max_epoch: 100
 patience: none
 # The initialization method for model parameters
@@ -20,7 +20,7 @@ frontend: s3prl
 frontend_conf:
     frontend_conf:
         upstream: wav2vec2_large_ll60k  # Note: If the upstream is changed, please change the input_size in the preencoder.
-    download_dir: ./hub
+    download_dir: /scratch2/sxc200004/tmp
     multilayer_feature: true
 
 preencoder: linear
