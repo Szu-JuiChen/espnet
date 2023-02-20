@@ -42,8 +42,11 @@ egs*/*/*/tensorboard
 egs*/*/*/wav*
 egs*/*/*/nltk*
 egs*/*/*/.cache*
+egs*/*/*/pretrained_models*
+egs*/fisher_callhome_spanish/*/local/mapping*
 
 # tools related
+tools/chainer
 tools/bin
 tools/include
 tools/lib
@@ -76,4 +79,12 @@ tools/festival*
 tools/speech_tools*
 tools/phonemizer*
 tools/py3mmseg
+tools/anaconda
+tools/ice-g2p
+tools/fairseq
+tools/RawNet
 tools/._*
+tools/anaconda
+tools/ice-g2p*
+tools/fairseq*
+tools/featbin*

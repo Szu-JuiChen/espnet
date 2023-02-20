@@ -1,17 +1,12 @@
 """Parallel beam search module."""
 
 import logging
-from typing import Any
-from typing import Dict
-from typing import List
-from typing import NamedTuple
-from typing import Tuple
+from typing import Any, Dict, List, NamedTuple, Tuple
 
 import torch
 from torch.nn.utils.rnn import pad_sequence
 
-from espnet.nets.beam_search import BeamSearch
-from espnet.nets.beam_search import Hypothesis
+from espnet.nets.beam_search import BeamSearch, Hypothesis
 
 
 class BatchHypothesis(NamedTuple):
@@ -123,13 +118,17 @@ class BatchBeamSearch(BeamSearch):
         for k, d in self.scorers.items():
             init_states[k] = d.batch_init_state(x)
             init_scores[k] = 0.0
+
+        # NOTE (Shih-Lun): added for OpenAI Whisper ASR
+        primer = [self.sos] if self.hyp_primer is None else self.hyp_primer
+
         return self.batchfy(
             [
                 Hypothesis(
                     score=0.0,
                     scores=init_scores,
                     states=init_states,
-                    yseq=torch.tensor([self.sos], device=x.device),
+                    yseq=torch.tensor(primer, device=x.device),
                 )
             ]
         )
@@ -344,5 +343,5 @@ class BatchBeamSearch(BeamSearch):
         for b in torch.nonzero(is_eos, as_tuple=False).view(-1):
             hyp = self._select(running_hyps, b)
             ended_hyps.append(hyp)
-        remained_ids = torch.nonzero(is_eos == 0, as_tuple=False).view(-1)
+        remained_ids = torch.nonzero(is_eos == 0, as_tuple=False).view(-1).cpu()
         return self._batch_select(running_hyps, remained_ids)

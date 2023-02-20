@@ -1,4 +1,5 @@
 import argparse
+
 import pytest
 import torch
 
@@ -32,7 +33,7 @@ def make_arg(**kwargs):
         mtlalpha=0.0,
         lsm_weight=0.001,
         char_list=["<blank>", "a", "e", "i", "o", "u"],
-        ctc_type="warpctc",
+        ctc_type="builtin",
     )
     defaults.update(kwargs)
     return argparse.Namespace(**defaults)
@@ -105,6 +106,19 @@ conformer_intermediate_ctc = dict(
     stochastic_depth_rate=0.3,
 )
 
+conformer_selfconditioned_ctc = dict(
+    transformer_encoder_pos_enc_layer_type="rel_pos",
+    transformer_encoder_selfattn_layer_type="rel_selfattn",
+    macaron_style=True,
+    use_cnn_module=False,
+    mtlalpha=1.0,
+    elayers=2,
+    intermediate_ctc_weight=0.5,
+    intermediate_ctc_layer="1",
+    stochastic_depth_rate=0.0,
+    self_conditioning=True,
+)
+
 
 def _savefn(*args, **kwargs):
     return
@@ -119,6 +133,7 @@ def _savefn(*args, **kwargs):
         conformer_mcnn_mmacaron_mrelattn_args,
         conformer_ctc,
         conformer_intermediate_ctc,
+        conformer_selfconditioned_ctc,
     ],
 )
 def test_transformer_trainable_and_decodable(model_dict):

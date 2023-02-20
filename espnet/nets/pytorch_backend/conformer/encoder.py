@@ -5,6 +5,7 @@
 """Encoder definition."""
 
 import logging
+
 import torch
 
 from espnet.nets.pytorch_backend.conformer.convolution import ConvolutionModule
@@ -12,21 +13,23 @@ from espnet.nets.pytorch_backend.conformer.encoder_layer import EncoderLayer
 from espnet.nets.pytorch_backend.nets_utils import get_activation
 from espnet.nets.pytorch_backend.transducer.vgg2l import VGG2L
 from espnet.nets.pytorch_backend.transformer.attention import (
-    MultiHeadedAttention,  # noqa: H301
-    RelPositionMultiHeadedAttention,  # noqa: H301
-    LegacyRelPositionMultiHeadedAttention,  # noqa: H301
+    LegacyRelPositionMultiHeadedAttention,
+    MultiHeadedAttention,
+    RelPositionMultiHeadedAttention,
 )
 from espnet.nets.pytorch_backend.transformer.embedding import (
-    PositionalEncoding,  # noqa: H301
-    ScaledPositionalEncoding,  # noqa: H301
-    RelPositionalEncoding,  # noqa: H301
-    LegacyRelPositionalEncoding,  # noqa: H301
+    LegacyRelPositionalEncoding,
+    PositionalEncoding,
+    RelPositionalEncoding,
+    ScaledPositionalEncoding,
 )
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
-from espnet.nets.pytorch_backend.transformer.multi_layer_conv import Conv1dLinear
-from espnet.nets.pytorch_backend.transformer.multi_layer_conv import MultiLayeredConv1d
+from espnet.nets.pytorch_backend.transformer.multi_layer_conv import (
+    Conv1dLinear,
+    MultiLayeredConv1d,
+)
 from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
-    PositionwiseFeedForward,  # noqa: H301
+    PositionwiseFeedForward,
 )
 from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling
@@ -93,6 +96,8 @@ class Encoder(torch.nn.Module):
         padding_idx=-1,
         stochastic_depth_rate=0.0,
         intermediate_layers=None,
+        ctc_softmax=None,
+        conditioning_layer_dim=None,
     ):
         """Construct an Encoder object."""
         super(Encoder, self).__init__()
@@ -228,17 +233,23 @@ class Encoder(torch.nn.Module):
             self.after_norm = LayerNorm(attention_dim)
 
         self.intermediate_layers = intermediate_layers
+        self.use_conditioning = True if ctc_softmax is not None else False
+        if self.use_conditioning:
+            self.ctc_softmax = ctc_softmax
+            self.conditioning_layer = torch.nn.Linear(
+                conditioning_layer_dim, attention_dim
+            )
 
     def forward(self, xs, masks):
         """Encode input sequence.
 
         Args:
             xs (torch.Tensor): Input tensor (#batch, time, idim).
-            masks (torch.Tensor): Mask tensor (#batch, time).
+            masks (torch.Tensor): Mask tensor (#batch, 1, time).
 
         Returns:
             torch.Tensor: Output tensor (#batch, time, attention_dim).
-            torch.Tensor: Mask tensor (#batch, time).
+            torch.Tensor: Mask tensor (#batch, 1, time).
 
         """
         if isinstance(self.embed, (Conv2dSubsampling, VGG2L)):
@@ -261,9 +272,21 @@ class Encoder(torch.nn.Module):
                     encoder_output = xs
                     if isinstance(encoder_output, tuple):
                         encoder_output = encoder_output[0]
-                        if self.normalize_before:
-                            encoder_output = self.after_norm(encoder_output)
+
+                    if self.normalize_before:
+                        encoder_output = self.after_norm(encoder_output)
+
                     intermediate_outputs.append(encoder_output)
+
+                    if self.use_conditioning:
+                        intermediate_result = self.ctc_softmax(encoder_output)
+
+                        if isinstance(xs, tuple):
+                            x, pos_emb = xs[0], xs[1]
+                            x = x + self.conditioning_layer(intermediate_result)
+                            xs = (x, pos_emb)
+                        else:
+                            xs = xs + self.conditioning_layer(intermediate_result)
 
         if isinstance(xs, tuple):
             xs = xs[0]

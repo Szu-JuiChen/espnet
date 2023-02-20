@@ -5,33 +5,31 @@ Created on Sat Aug 21 17:27:16 2021.
 @author: Keqi Deng (UCAS)
 """
 
-from espnet.nets.pytorch_backend.conformer.convolution import ConvolutionModule
+import math
+from typing import Optional, Tuple
+
+import torch
+from typeguard import check_argument_types
+
+from espnet2.asr.encoder.abs_encoder import AbsEncoder
 from espnet.nets.pytorch_backend.conformer.contextual_block_encoder_layer import (
-    ContextualBlockEncoderLayer,  # noqa: H301
+    ContextualBlockEncoderLayer,
 )
-from espnet.nets.pytorch_backend.nets_utils import (
-    make_pad_mask,  # noqa: H301
-    get_activation,  # noqa: H301
-)
+from espnet.nets.pytorch_backend.conformer.convolution import ConvolutionModule
+from espnet.nets.pytorch_backend.nets_utils import get_activation, make_pad_mask
 from espnet.nets.pytorch_backend.transformer.attention import MultiHeadedAttention
 from espnet.nets.pytorch_backend.transformer.embedding import StreamPositionalEncoding
 from espnet.nets.pytorch_backend.transformer.layer_norm import LayerNorm
-from espnet.nets.pytorch_backend.transformer.multi_layer_conv import Conv1dLinear
-from espnet.nets.pytorch_backend.transformer.multi_layer_conv import MultiLayeredConv1d
+from espnet.nets.pytorch_backend.transformer.multi_layer_conv import (
+    Conv1dLinear,
+    MultiLayeredConv1d,
+)
 from espnet.nets.pytorch_backend.transformer.positionwise_feed_forward import (
-    PositionwiseFeedForward,  # noqa: H301
+    PositionwiseFeedForward,
 )
 from espnet.nets.pytorch_backend.transformer.repeat import repeat
 from espnet.nets.pytorch_backend.transformer.subsampling_without_posenc import (
-    Conv2dSubsamplingWOPosEnc,  # noqa: H301
-)
-from espnet2.asr.encoder.abs_encoder import AbsEncoder
-import math
-import torch
-from typeguard import check_argument_types
-from typing import (
-    Optional,  # noqa: H301
-    Tuple,  # noqa: H301
+    Conv2dSubsamplingWOPosEnc,
 )
 
 
@@ -208,6 +206,7 @@ class ContextualBlockConformerEncoder(AbsEncoder):
         ilens: torch.Tensor,
         prev_states: torch.Tensor = None,
         is_final=True,
+        infer_mode=False,
     ) -> Tuple[torch.Tensor, torch.Tensor, Optional[torch.Tensor]]:
         """Embed positions in tensor.
 
@@ -215,10 +214,13 @@ class ContextualBlockConformerEncoder(AbsEncoder):
             xs_pad: input tensor (B, L, D)
             ilens: input length (B)
             prev_states: Not to be used now.
+            infer_mode: whether to be used for inference. This is used to
+                distinguish between forward_train (train and validate) and
+                forward_infer (decode).
         Returns:
             position embedded tensor and mask
         """
-        if self.training or xs_pad.size(0) > 1:
+        if self.training or not infer_mode:
             return self.forward_train(xs_pad, ilens, prev_states)
         else:
             return self.forward_infer(xs_pad, ilens, prev_states, is_final)
@@ -254,8 +256,8 @@ class ContextualBlockConformerEncoder(AbsEncoder):
         # block_size could be 0 meaning infinite
         # apply usual encoder for short sequence
         if self.block_size == 0 or total_frame_num <= self.block_size:
-            xs_pad, masks, _, _, _ = self.encoders(
-                self.pos_enc(xs_pad), masks, None, None
+            xs_pad, masks, _, _, _, _, _ = self.encoders(
+                self.pos_enc(xs_pad), masks, False, None, None
             )
             if self.normalize_before:
                 xs_pad = self.after_norm(xs_pad)
@@ -346,7 +348,9 @@ class ContextualBlockConformerEncoder(AbsEncoder):
         xs_chunk[:, :, self.block_size + 1] = addin
 
         # forward
-        ys_chunk, mask_online, _, _, _ = self.encoders(xs_chunk, mask_online, xs_chunk)
+        ys_chunk, mask_online, _, _, _, _, _ = self.encoders(
+            xs_chunk, mask_online, False, xs_chunk
+        )
 
         # copy output
         # first step
@@ -491,7 +495,9 @@ class ContextualBlockConformerEncoder(AbsEncoder):
         assert self.block_size > 0
         if n_processed_blocks == 0 and total_frame_num <= self.block_size and is_final:
             xs_chunk = self.pos_enc(xs_pad).unsqueeze(1)
-            xs_pad, _, _, _, _, _ = self.encoders(xs_chunk, None, None, None, True)
+            xs_pad, _, _, _, _, _, _ = self.encoders(
+                xs_chunk, None, True, None, None, True
+            )
             xs_pad = xs_pad.squeeze(0)
             if self.normalize_before:
                 xs_pad = self.after_norm(xs_pad)
@@ -527,8 +533,16 @@ class ContextualBlockConformerEncoder(AbsEncoder):
 
             prev_addin = addin
 
-        ys_chunk, _, _, past_encoder_ctx, _, _ = self.encoders(
-            xs_chunk, None, past_encoder_ctx
+        # mask setup, it should be the same to that of forward_train
+        mask_online = xs_pad.new_zeros(
+            xs_pad.size(0), block_num, self.block_size + 2, self.block_size + 2
+        )
+        mask_online.narrow(2, 1, self.block_size + 1).narrow(
+            3, 0, self.block_size + 1
+        ).fill_(1)
+
+        ys_chunk, _, _, _, past_encoder_ctx, _, _ = self.encoders(
+            xs_chunk, mask_online, True, past_encoder_ctx
         )
 
         # remove addin
