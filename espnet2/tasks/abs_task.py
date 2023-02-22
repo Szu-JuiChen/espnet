@@ -1863,6 +1863,21 @@ class AbsTask(ABC):
                 # NOTE(kamo): "cuda" for torch.load always indicates cuda:0
                 #   in PyTorch<=1.4
                 device = f"cuda:{torch.cuda.current_device()}"
+            #### hack for frontend.upstream naming due to s3prl update
+            #if args.old_s3prl_model:
+            #    old_state_dict = torch.load(model_file, map_location=device)
+            #    new_state_dict = {}
+            #    for key, value in old_state_dict.items():
+            #        if 'upstream' in key:
+            #            new_key = key.replace('upstream', 'upstream.upstream')
+            #            new_state_dict[new_key] = value
+            #        else:
+            #            logging.info(f"exception in state_dict: {key}")
+            #            new_state_dict[key] = value
+            #    del old_state_dict
+            #    model.load_state_dict(new_state_dict)
+            #else:
+            #############################################################
             model.load_state_dict(torch.load(model_file, map_location=device))
 
         return model, args
