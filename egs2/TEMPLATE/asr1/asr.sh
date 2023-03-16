@@ -1384,7 +1384,7 @@ if ! "${skip_eval}"; then
                 split_scps+=" ${_logdir}/keys.${n}.scp"
             done
             # shellcheck disable=SC2086
-            utils/split_scp.pl "${key_file}" ${split_scps}
+            utils/split_scp_spkdur.pl --utt2spk=data/${dset}/utt2spk --utt2dur=data/${dset}/utt2dur "${key_file}" ${split_scps}
 
             # 2. Submit decoding jobs
             log "Decoding started... log: '${_logdir}/asr_inference.*.log'"

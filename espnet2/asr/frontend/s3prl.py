@@ -70,6 +70,7 @@ class S3prlFrontend(AbsFrontend):
         featurizer = Featurizer(upstream, layer_selections=layer_selections)
 
         self.multilayer_feature = multilayer_feature
+        self.multilayer_cross_feature = multilayer_cross_feature
         self.layer = layer
         self.upstream, self.featurizer = upstream, featurizer
         self.pretrained_params = copy.deepcopy(self.upstream.state_dict())
@@ -107,7 +108,9 @@ class S3prlFrontend(AbsFrontend):
             feats, feats_lens = feats[layer], feats_lens[layer]
             return feats, feats_lens
 
-        if self.multilayer_feature:
+        if self.multilayer_cross_feature:
+            return feats, feats_lens
+        elif self.multilayer_feature:
             feats, feats_lens = self.featurizer(feats, feats_lens)
         else:
             feats, feats_lens = self.featurizer(feats[-1:], feats_lens[-1:])
