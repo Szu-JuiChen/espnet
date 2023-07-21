@@ -1888,6 +1888,23 @@ class AbsTask(ABC):
                         new_state_dict[key] = value
                 del old_state_dict
                 model.load_state_dict(new_state_dict)
+            # The following is for zero-shot inference using Whisper
+            elif 'whisper' in args.config:
+                old_state_dict = torch.load(model_file, map_location=device)
+                new_state_dict = {}
+                for key, value in old_state_dict.items():
+                    if 'encoder' in key:
+                        new_key = key.replace('encoder', 'encoder.encoders')
+                        new_state_dict[new_key] = value
+                    elif 'decoder' in key:
+                        new_key = key.replace('decoder', 'decoder.decoders')
+                        new_state_dict[new_key] = value
+                    else:
+                        logging.info(f"exception in state_dict: {key}")
+                        new_state_dict[key] = value
+                del old_state_dict
+                model.load_state_dict(new_state_dict)
+                logging.info(f"Whisper loaded!")
             else:
             ############################################################
                 model.load_state_dict(torch.load(model_file, map_location=device))

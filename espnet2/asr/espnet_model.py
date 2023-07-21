@@ -342,8 +342,20 @@ class ESPnetASRModel(AbsESPnetModel):
                         mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0) # marginal parameter for smoother loss
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                     else:
+                        # The Bandpass only calculate loss when correlation is between 0.4 and 0.8
                         #mat.masked_fill_(mat.ge(-0.4) * mat.le(0.4), 0).masked_fill_(mat.ge(0.8), 0).masked_fill_(mat.le(-0.8), 0)
                         mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0)
+                        #mat.masked_fill_(mat.le(-0.8), 0).masked_fill_(mat.ge(0.8), 0)
+
+                        ### barlow loss ###
+                        ## Make c_diff = (c - I).pow(2)
+                        #identity = torch.eye(mat.shape[-1], dtype=mat.dtype, device=mat.device)
+                        #mat_diff = (mat - identity).pow(2)
+                        ## multiply off-diagonal elems of c_diff by lambda=0.005
+                        #off_mask = 1 - identity
+                        #mat_diff = mat_diff * off_mask * 0.005 + torch.diag_embed(torch.diagonal(mat_diff, dim1=-2, dim2=-1))
+                        ###################
+                        # calculate loss
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                 loss_corr /= len(corr_mat)
                 if not self.band_pass:

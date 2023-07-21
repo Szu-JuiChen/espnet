@@ -8,15 +8,10 @@ import numpy as np
 import torch
 from typeguard import check_argument_types
 from typing import Tuple
-# for transformer layer
-#from espnet2.asr.encoder.transformer_encoder import TransformerEncoder
-#from espnet.nets.pytorch_backend.transformer.subsampling import Conv2dSubsampling2
-#import argparse
 
 class FusedFrontends(AbsFrontend):
     def __init__(
         self, frontends=None, align_method="linear_projection", proj_dim=100, fs=16000, use_corr_loss=False, multi_layer=False
-#proj_conf=argparse.Namespace # for transformer layer
     ):
         assert check_argument_types()
         super().__init__()
@@ -30,7 +25,6 @@ class FusedFrontends(AbsFrontend):
         self.use_corr_loss = use_corr_loss
         self.multi_layer = multi_layer # non-linear projection layers
         self.multilayer_cross_feature = {} # list of index for frontend that use cross feature
-        #self.proj_conf = proj_conf # for transformer layer
         if align_method == "wsum":
             num_front = len(frontends)
             if num_front > 1: # in case users use one frontend with fused
@@ -100,30 +94,64 @@ class FusedFrontends(AbsFrontend):
                 if multilayer_cross_feature:
                     model = self.frontends[-1]
                     self.multilayer_cross_feature[i] = [model.output_size(), model.upstream.num_layers]
+            elif frontend_type == "whisper":
+                from espnet2.asr.frontend.whisper import WhisperFrontend
+                whisper_model, freeze_weights, download_dir = (
+                    frontend.get("whisper_model"),
+                    frontend.get("freeze_weights", True),
+                    frontend.get("download_dir"),
+                )
+                self.frontends.append(
+                    WhisperFrontend(
+                        whisper_model=whisper_model,
+                        freeze_weights=freeze_weights,
+                        download_dir=download_dir,
+                    )
+                )
             else:
                 raise NotImplementedError  # frontends are only default or s3prl
 
         self.frontends = torch.nn.ModuleList(self.frontends)
-        if len(self.multilayer_cross_feature) > 1:
+        if multilayer_cross_feature:
+            from espnet2.tts.gst.style_encoder import MultiHeadedAttention
             dic_values = np.array(list(self.multilayer_cross_feature.values()))
             dimensions = dic_values[:,0]
             num_layers = dic_values[:,1]
             assert len(set(num_layers)) == 1 # make sure all models have the same number of layers 
             self.mha = []
-            for i, frontend in enumerate(self.frontends):
-                self.mha.append(
-                    [torch.nn.MultiheadAttention(dimensions[i], 1, batch_first=True)
-                    for _ in range(num_layers[i])]
-                )
+            for i, _ in enumerate(self.frontends):
+                for j, _ in enumerate(self.frontends[i+1:], i+1):
+                    self.mha.append(
+                        [MultiHeadedAttention(q_dim=dimensions[i],
+                                            k_dim=dimensions[j],
+                                            v_dim=dimensions[j],
+                                            n_head=1,
+                                            n_feat=self.proj_dim,
+                                            dropout_rate=0.0,)
+                        for _ in range(num_layers[i] // 2)] # using half of layers
+                    )
+                    self.mha.append(
+                        [MultiHeadedAttention(q_dim=dimensions[j],
+                                            k_dim=dimensions[i],
+                                            v_dim=dimensions[i],
+                                            n_head=1,
+                                            n_feat=self.proj_dim,
+                                            dropout_rate=0.0,)
+                        for _ in range(num_layers[j] // 2)] # using half of layers
+                    )
             self.mha = torch.nn.ModuleList([torch.nn.ModuleList(mha) for mha in self.mha])
 
-        self.gcd = np.gcd.reduce([frontend.hop_length for frontend in self.frontends])
-        self.factors = [frontend.hop_length // self.gcd for frontend in self.frontends]
+        #self.gcd = np.gcd.reduce([frontend.hop_length for frontend in self.frontends])
+        #self.factors = [frontend.hop_length // self.gcd for frontend in self.frontends]
         if self.align_method != "concat":
+            if multilayer_cross_feature:
+                extra_dim = self.proj_dim
+            else:
+                extra_dim = 0
             if self.multi_layer:
                 self.projection_layers = [
                     torch.nn.Sequential(
-                        torch.nn.Linear(in_features=frontend.output_size(), out_features=256,),
+                        torch.nn.Linear(in_features=frontend.output_size() + extra_dim, out_features=256,),
                         torch.nn.GELU(),
                         torch.nn.Linear(in_features=256, out_features=256,),
                         torch.nn.GELU(),
@@ -132,22 +160,36 @@ class FusedFrontends(AbsFrontend):
                     for frontend in self.frontends
                 ]
             else:
-                # for transformer layer
-                #self.projection_layers2 = [
-                #    TransformerEncoder(
-                #        input_size=frontend.output_size(), **self.proj_conf
-                #    )
-                #    for i, frontend in enumerate(self.frontends)
-                #]
                 self.projection_layers = [
                     torch.nn.Linear(
-                        in_features=frontend.output_size(),
-                        out_features=self.factors[i] * self.proj_dim,
+                        in_features=frontend.output_size() + extra_dim,
+                        out_features=self.proj_dim,
                     )
                     for i, frontend in enumerate(self.frontends)
                 ]
             self.projection_layers = torch.nn.ModuleList(self.projection_layers)
-            #self.projection_layers2 = torch.nn.ModuleList(self.projection_layers2) # for transformer layer
+        if self.align_method == "cross_attn":
+            from espnet2.tts.gst.style_encoder import MultiHeadedAttention
+            self.mha = []
+            for i, _ in enumerate(self.frontends):
+                for j, _ in enumerate(self.frontends[i+1:], i+1):
+                    self.mha.append(
+                        MultiHeadedAttention(q_dim=self.proj_dim,
+                                            k_dim=self.proj_dim,
+                                            v_dim=self.proj_dim,
+                                            n_head=1,
+                                            n_feat=self.proj_dim,
+                                            dropout_rate=0.0,)
+                    )
+                    self.mha.append(
+                        MultiHeadedAttention(q_dim=self.proj_dim,
+                                            k_dim=self.proj_dim,
+                                            v_dim=self.proj_dim,
+                                            n_head=1,
+                                            n_feat=self.proj_dim,
+                                            dropout_rate=0.0,)
+                    )
+            self.mha = torch.nn.ModuleList(self.mha)
 
     # if no preencoder in conf, this function will return the wrong output_size. See espnet/espnet2/task/asr.py line 404.
     # TODO: return by align_method
@@ -158,60 +200,68 @@ class FusedFrontends(AbsFrontend):
         self, input: torch.Tensor, input_lengths: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         # step 0 : get all frontends features
-        self.feats = []
+        feats = []
         for frontend in self.frontends:
             input_feats, feats_lens = frontend.forward(input, input_lengths)
-            self.feats.append([input_feats, feats_lens])
+            feats.append([input_feats, feats_lens])
         # processing cross-attention
         if len(self.multilayer_cross_feature) > 0:
             ts_outputs = []
             st_outputs = []
             for i, target in enumerate(self.frontends):
                 for j, source in enumerate(self.frontends[i+1:], i+1):
-                    #assert len(self.feats[i][0]) > 1 # make sure its features of all layers
-                    t_input_feats, t_flens = self.feats[i]
-                    s_input_feats, s_flens = self.feats[j]
-                    # make key_padding_mask
-                    key_padding_mask = make_pad_mask(t_flens[0]).to(t_flens[0].device)
+                    #assert len(feats[i][0]) > 1 # make sure its features of all layers
+                    t_input_feats, t_flens = feats[i]
+                    s_input_feats, s_flens = feats[j]
+                    ## make key_padding_mask for torch bulit-in MHA
+                    #key_padding_mask = make_pad_mask(t_flens[0]).to(t_flens[0].device)
                     # make attn_mask
                     batch_size, flen, _ = t_input_feats[0].shape
                     attn_mask = torch.zeros(batch_size, flen, flen).bool().to(t_flens[0].device)
                     for b, length in enumerate(t_flens[0]): # iterate through every batch
-                        attn_mask[b, :, length:] = True
-                        attn_mask[b, length:, :] = True
-                        attn_mask[b, :length, :length] = False
+                        attn_mask[b, :, length:] = False
+                        attn_mask[b, length:, :] = False
+                        attn_mask[b, :length, :length] = True
                     # calculating mha for every layers
                     for l in range(len(t_input_feats)):
-                        # calculating mha using target -> source
                         q, kv = t_input_feats[l], s_input_feats[l]
-                        output, _ = self.mha[i][l](q, kv, kv, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
-                        ts_outputs.append(output + q)
-                        # calculating mha using source -> target
-                        output, _ = self.mha[j][l](kv, q, q, key_padding_mask=key_padding_mask, attn_mask=attn_mask)
-                        st_outputs.append(output + kv)
-                    t_input_feats, t_flens = target.featurizer(ts_outputs, t_flens)
-                    s_input_feats, s_flens = source.featurizer(st_outputs, s_flens)
+                        if l in range(1,24,2):
+                            # calculating mha using target -> source
+                            output = self.mha[i][l//2](q, kv, kv, attn_mask)
+                            ts_outputs.append(output)
+                            # calculating mha using source -> target
+                            output = self.mha[j][l//2](kv, q, q, attn_mask)
+                            st_outputs.append(output)
+                        else:
+                            ts_outputs.append(q)
+                            st_outputs.append(kv)
+                    t_input_feats, _ = target.featurizer(t_input_feats, t_flens)
+                    s_input_feats, _ = source.featurizer(s_input_feats, s_flens)
+                    ts_input_feats, t_flens = target.featurizer2(ts_outputs, t_flens)
+                    st_input_feats, s_flens = source.featurizer2(st_outputs, s_flens)
+                    # concat input features with cross-attention features
+                    t_input_feats = torch.cat((t_input_feats, ts_input_feats), dim=-1)
+                    s_input_feats = torch.cat((s_input_feats, st_input_feats), dim=-1)
                     feats_lens = t_flens
-                    self.feats[i] = [t_input_feats, t_flens]
-                    self.feats[j] = [s_input_feats, s_flens]
+                    feats[i] = [t_input_feats, t_flens]
+                    feats[j] = [s_input_feats, s_flens]
 
-        m = min([x[0].shape[1] for x in self.feats])
+        m = min([x[0].shape[1] for x in feats])
         if (
             self.align_method == "linear_projection"
         ):  # TODO(Dan): to add other align methods
             # first step : projections
             self.feats_proj = []
             #self.corr_mat = [] # for plot
-            #self.correlation_matrix(self.feats[0][0], self.feats[1][0]) # for plot
-            for i, frontend in enumerate(self.frontends):
-                input_feats = self.feats[i][0]
-                #ilens = self.feats[i][1] # for transformer layer
-                #self.feats_proj.append(self.projection_layers[i](input_feats, ilens)[0]) # for transformer layer
+            #self.correlation_matrix(feats[0][0], feats[1][0]) # for plot
+            for i, _ in enumerate(self.frontends):
+                input_feats = feats[i][0]
                 self.feats_proj.append(self.projection_layers[i](input_feats))
             #self.correlation_matrix(self.feats_proj[0], self.feats_proj[1]) # for plot
+            
             # 2nd step : reshape
             self.feats_reshaped = []
-            for i, frontend in enumerate(self.frontends):
+            for i, _ in enumerate(self.frontends):
                 input_feats_proj = self.feats_proj[i]
                 input_feats_proj = input_feats_proj.permute(0,2,1)
                 input_feats_reshaped = torch.nn.functional.interpolate(
@@ -225,8 +275,9 @@ class FusedFrontends(AbsFrontend):
             # 3th step : normalize by frontend
             self.feats_normalized = []
             for i, _ in enumerate(self.frontends):
-                feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
-                self.feats_normalized.append(feats)
+                # TODO(Sray): the feats_lens need to be divided by m first before normalize
+                norm_feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
+                self.feats_normalized.append(norm_feats)
 
             input_feats = torch.cat(
                 self.feats_normalized, dim=-1
@@ -234,8 +285,8 @@ class FusedFrontends(AbsFrontend):
         elif self.align_method == "concat":
             # 1nd step : downsample
             self.feats_reshaped = []
-            for i, frontend in enumerate(self.frontends):
-                input_feats = self.feats[i][0]
+            for i, _ in enumerate(self.frontends):
+                input_feats = feats[i][0]
                 input_feats = input_feats.permute(0,2,1)
                 input_feats_reshaped = torch.nn.functional.interpolate(
                     input_feats, size=m
@@ -246,8 +297,8 @@ class FusedFrontends(AbsFrontend):
             # 2nd step : normalize by frontend
             self.feats_normalized = []
             for i, _ in enumerate(self.frontends):
-                feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
-                self.feats_normalized.append(feats)
+                norm_feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
+                self.feats_normalized.append(norm_feats)
 
             input_feats = torch.cat(
                 self.feats_normalized, dim=-1
@@ -256,13 +307,39 @@ class FusedFrontends(AbsFrontend):
             # first step : projections
             self.feats_proj = []
             #self.corr_mat = [] # for plot
-            #self.correlation_matrix(self.feats[0][0], self.feats[1][0]) # for plot
-            for i, frontend in enumerate(self.frontends):
-                #logging.info(f"feats shape: {self.feats[i][0].shape}")
-                input_feats = self.feats[i][0]
+            #self.correlation_matrix(feats[0][0], feats[1][0]) # for plot
+            for i, _ in enumerate(self.frontends):
+                input_feats = feats[i][0]
                 self.feats_proj.append(self.projection_layers[i](input_feats))
-                #logging.info(f"feats_proj shape: {self.feats_proj[-1].shape}")
             #self.correlation_matrix(self.feats_proj[0], self.feats_proj[1]) # for plot
+            # 2nd step : downsample
+            self.feats_reshaped = []
+            for i, _ in enumerate(self.frontends):
+                input_feats_proj = self.feats_proj[i]
+                input_feats_proj = input_feats_proj.permute(0,2,1)
+                input_feats_reshaped = torch.nn.functional.interpolate(
+                    input_feats_proj, size=m
+                )
+                input_feats_reshaped = input_feats_reshaped.permute(0,2,1)
+                self.feats_reshaped.append(input_feats_reshaped)
+            if self.use_corr_loss and self.training:
+                self.corr_mat = []
+                self.correlation_matrix(self.feats_reshaped[0], self.feats_reshaped[1])
+            # 3nd step : normalize by frontend
+            self.feats_normalized = []
+            for i, _ in enumerate(self.frontends):
+                norm_feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
+                self.feats_normalized.append(norm_feats)
+            # 4th step : weighted sum
+            input_feats = 0
+            for i, _ in enumerate(self.frontends):
+                input_feats += self.feats_normalized[i] * (self.weights[i] / sum(self.weights))
+        elif self.align_method == "cross_attn": # This is the co-attention method
+            # first step : projections
+            self.feats_proj = []
+            for i, frontend in enumerate(self.frontends):
+                input_feats = feats[i][0]
+                self.feats_proj.append(self.projection_layers[i](input_feats))
             # 2nd step : downsample
             self.feats_reshaped = []
             for i, frontend in enumerate(self.frontends):
@@ -273,19 +350,22 @@ class FusedFrontends(AbsFrontend):
                 )
                 input_feats_reshaped = input_feats_reshaped.permute(0,2,1)
                 self.feats_reshaped.append(input_feats_reshaped)
-                #logging.info(f"feats_reshaped shape: {self.feats_reshaped[-1].shape}")
-            if self.use_corr_loss and self.training:
-                self.corr_mat = []
-                self.correlation_matrix(self.feats_reshaped[0], self.feats_reshaped[1])
-            # 3nd step : normalize by frontend
-            self.feats_normalized = []
-            for i, _ in enumerate(self.frontends):
-                feats, _ = self.normalize(self.feats_reshaped[i], feats_lens)
-                self.feats_normalized.append(feats)
-            # 4th step : weighted sum
-            input_feats = 0
-            for i, _ in enumerate(self.frontends):
-                input_feats += self.feats_normalized[i] * (self.weights[i] / sum(self.weights))
+            # 3rd step : cross_attn
+            # make attn_mask
+            batch_size, flen, _ = self.feats_reshaped[0].shape
+            attn_mask = torch.zeros(batch_size, flen, flen).bool().to(feats_lens.device)
+            for b, length in enumerate(feats_lens): # iterate through every batch
+                attn_mask[b, :, length:] = False
+                attn_mask[b, length:, :] = False
+                attn_mask[b, :length, :length] = True
+            q, kv = self.feats_reshaped
+            self.feats_final = []
+            self.feats_final.append(self.mha[0](q, kv, kv, attn_mask) + q)
+            self.feats_final.append(self.mha[1](kv, q, q, attn_mask) + kv)
+            # 4th step: concat
+            input_feats = torch.cat(
+                self.feats_final, dim=-1
+            )
         else:
             raise NotImplementedError
         if self.use_corr_loss:
@@ -304,3 +384,5 @@ class FusedFrontends(AbsFrontend):
         #self.corr_mat.append(torch.bmm(f1_normBT.transpose(-2,-1), f2_normBT) / (f2_normBT.shape[1] - 1)) # bmm(D*T, T*D) / (T - 1) / . Divide by T-1 because default unbiased option in std() is True.
         self.corr_mat.append(torch.bmm(f1_normT.transpose(-2,-1), f2_normT) / (f2_normT.shape[1] - 1))
         assert(self.corr_mat[-1].max() < 1 and self.corr_mat[-1].min() > -1), f"max: {self.corr_mat[-1].max()}, min: {self.corr_mat[-1].min()}"
+
+

@@ -68,11 +68,15 @@ class S3prlFrontend(AbsFrontend):
         else:
             layer_selections = None
         featurizer = Featurizer(upstream, layer_selections=layer_selections)
+        if multilayer_cross_feature:
+            featurizer2 = Featurizer(upstream, layer_selections=[1,3,5,7,9,11,13,15,17,19,21,23])
 
         self.multilayer_feature = multilayer_feature
         self.multilayer_cross_feature = multilayer_cross_feature
         self.layer = layer
         self.upstream, self.featurizer = upstream, featurizer
+        if multilayer_cross_feature:
+            self.featurizer2 = featurizer2
         self.pretrained_params = copy.deepcopy(self.upstream.state_dict())
         self.frontend_type = "s3prl"
         self.hop_length = self.featurizer.downsample_rate
