@@ -168,7 +168,7 @@ class FusedFrontends(AbsFrontend):
                     for i, frontend in enumerate(self.frontends)
                 ]
             self.projection_layers = torch.nn.ModuleList(self.projection_layers)
-        if self.align_method == "cross_attn":
+        if self.align_method == "co_attn":
             from espnet2.tts.gst.style_encoder import MultiHeadedAttention
             self.mha = []
             for i, _ in enumerate(self.frontends):
@@ -334,7 +334,7 @@ class FusedFrontends(AbsFrontend):
             input_feats = 0
             for i, _ in enumerate(self.frontends):
                 input_feats += self.feats_normalized[i] * (self.weights[i] / sum(self.weights))
-        elif self.align_method == "cross_attn": # This is the co-attention method
+        elif self.align_method == "co_attn": # This is the co-attention method
             # first step : projections
             self.feats_proj = []
             for i, frontend in enumerate(self.frontends):
@@ -350,7 +350,7 @@ class FusedFrontends(AbsFrontend):
                 )
                 input_feats_reshaped = input_feats_reshaped.permute(0,2,1)
                 self.feats_reshaped.append(input_feats_reshaped)
-            # 3rd step : cross_attn
+            # 3rd step : co_attn
             # make attn_mask
             batch_size, flen, _ = self.feats_reshaped[0].shape
             attn_mask = torch.zeros(batch_size, flen, flen).bool().to(feats_lens.device)
