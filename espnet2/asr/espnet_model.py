@@ -363,7 +363,7 @@ class ESPnetASRModel(AbsESPnetModel):
                     #loss = loss + self.corr_weight * loss_corr
                 else: # corr loss is separate from asr loss
                     loss = loss + self.corr_weight * loss_corr
-            stats["loss_corr"] = loss_corr.detach() if loss_corr is not None else None
+                stats["loss_corr"] = loss_corr.detach() if loss_corr is not None else None
 
             # Collect Attn branch stats
             stats["loss_att"] = loss_att.detach() if loss_att is not None else None
