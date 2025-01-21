@@ -9,7 +9,7 @@ set -o pipefail
 
 train_set=train_worn_simu_u400k_cleaned
 valid_set=dev_gss_multiarray
-test_sets="dev_gss_multiarray"
+test_sets="dev_gss_multiarray eval_gss_multiarray"
 
 
 asr_config="conf/tuning/train_asr_transformer_wavlm_lr1e-3_specaug_accum1_preenc128_warmup20k.yaml"
@@ -29,8 +29,7 @@ word_vocab_size=65000
     --bpe_nlsyms "${bpe_nlsyms}" \
     --nlsyms_txt "data/nlsyms.txt" \
     --feats_type raw \
-    --audio_format "flac" \
-    --speed_perturb_factors "0.9 1.0 1.1" \
+    --audio_format "wav" \
     --asr_config "${asr_config}" \
     --inference_config "${inference_config}" \
     --use_lm ${use_lm} \
