@@ -361,11 +361,8 @@ class ESPnetASRModel(AbsESPnetModel):
                         # calculate loss
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                 loss_corr /= len(corr_mat)
-                if not self.band_pass:
-                    #loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
-                    loss = loss + self.corr_weight * loss_corr
-                else: # corr loss is separate from asr loss
-                    loss = loss + self.corr_weight * loss_corr
+                #loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
+                loss = loss + self.corr_weight * loss_corr
                 stats["loss_corr"] = loss_corr.detach() if loss_corr is not None else None
 
             # Collect Attn branch stats
