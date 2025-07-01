@@ -66,6 +66,7 @@ class ESPnetASRModel(AbsESPnetModel):
         sym_eos: str = "<sos/eos>",
         extract_feats_in_collect_stats: bool = True,
         corr_weight: float = 0.0,
+        lamb: float = 0.6,
         band_pass: bool = False,
         lang_token_id: int = -1,
     ):
@@ -190,6 +191,8 @@ class ESPnetASRModel(AbsESPnetModel):
         assert 0.0 <= corr_weight <= 1.0, corr_weight
         self.corr_weight = corr_weight
         self.band_pass = band_pass
+        self.lamb = lamb
+        logging.info(f"Using lambda = {lamb}")
 
     def forward(
         self,
@@ -339,13 +342,13 @@ class ESPnetASRModel(AbsESPnetModel):
                 loss_corr = 0
                 for mat in corr_mat:
                     if not self.band_pass:
-                        mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0) # marginal parameter for smoother loss
+                        mat.masked_fill_(mat.ge(-self.lamb) * mat.le(self.lamb), 0) # marginal parameter for smoother loss
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                     else:
+                        #logging.warning("Inside band_pass, increase corr setting")
                         # The Bandpass only calculate loss when correlation is between 0.4 and 0.8
                         #mat.masked_fill_(mat.ge(-0.4) * mat.le(0.4), 0).masked_fill_(mat.ge(0.8), 0).masked_fill_(mat.le(-0.8), 0)
-                        mat.masked_fill_(mat.ge(-0.6) * mat.le(0.6), 0)
-                        #mat.masked_fill_(mat.le(-0.8), 0).masked_fill_(mat.ge(0.8), 0)
+                        mat.masked_fill_(mat.le(-self.lamb), 0).masked_fill_(mat.ge(self.lamb), 0) # for up setting
 
                         ### barlow loss ###
                         ## Make c_diff = (c - I).pow(2)
@@ -359,8 +362,8 @@ class ESPnetASRModel(AbsESPnetModel):
                         loss_corr += torch.sum(mat.square()) / mat.shape[0] # mat is [B,D,D]. We average over batch.
                 loss_corr /= len(corr_mat)
                 if not self.band_pass:
-                    loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
-                    #loss = loss + self.corr_weight * loss_corr
+                    #loss = (1-self.corr_weight) * loss + self.corr_weight * loss_corr
+                    loss = loss + self.corr_weight * loss_corr
                 else: # corr loss is separate from asr loss
                     loss = loss + self.corr_weight * loss_corr
                 stats["loss_corr"] = loss_corr.detach() if loss_corr is not None else None
