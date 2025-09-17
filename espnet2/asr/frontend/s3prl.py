@@ -1,6 +1,6 @@
 import copy
 import logging
-from typing import Optional, Tuple, Union
+from typing import Optional, Tuple, Union, List
 
 import humanfriendly
 import torch
@@ -21,7 +21,7 @@ class S3prlFrontend(AbsFrontend):
         download_dir: str = None,
         multilayer_feature: bool = False,
         multilayer_cross_feature: bool = False,
-        layer: int = -1,
+        layer: Union[int, str] = -1,
     ):
         try:
             import s3prl
@@ -61,10 +61,18 @@ class S3prlFrontend(AbsFrontend):
             upstream.upstream.model.encoder.layerdrop = 0.0
 
         if layer != -1:
-            layer_selections = [layer]
-            assert (
-                not multilayer_feature
-            ), "multilayer feature will be deactivated, when specific layer used"
+            if isinstance(layer, str): # multiple layer selected
+                parts = [p.strip() for p in layer.split(",") if p.strip() != ""]
+                layer = [int(p) for p in parts] if parts else [-1]
+                layer_selections = layer
+                logging.info(f"Layer selected for featurizer: {layer}")
+                assert (multilayer_feature), "multilayer_feature must be true when multiple layer is selected"
+            elif isinstance(layer, int): # Single layer selected
+                layer_selections = [layer]
+                logging.info(f"Layer selected: {layer}, no featurizer used")
+                assert (
+                    not multilayer_feature
+                ), "multilayer feature will be deactivated, when specific layer used"
         else:
             layer_selections = None
         featurizer = Featurizer(upstream, layer_selections=layer_selections)
@@ -107,7 +115,7 @@ class S3prlFrontend(AbsFrontend):
         self, input: torch.Tensor, input_lengths: torch.Tensor
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         feats, feats_lens = self.upstream(input, input_lengths)
-        if self.layer != -1:
+        if self.layer != -1 and isinstance(self.layer, int):
             layer = self.layer
             feats, feats_lens = feats[layer], feats_lens[layer]
             return feats, feats_lens

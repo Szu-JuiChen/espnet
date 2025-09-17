@@ -76,11 +76,12 @@ class FusedFrontends(AbsFrontend):
                     )
                 )
             elif frontend_type == "s3prl":
-                frontend_conf, download_dir, multilayer_feature, multilayer_cross_feature = (
+                frontend_conf, download_dir, multilayer_feature, multilayer_cross_feature, layer = (
                     frontend.get("frontend_conf"),
                     frontend.get("download_dir"),
                     frontend.get("multilayer_feature", False),
                     frontend.get("multilayer_cross_feature", False),
+                    frontend.get("layer"),
                 )
                 self.frontends.append(
                     S3prlFrontend(
@@ -89,6 +90,7 @@ class FusedFrontends(AbsFrontend):
                         download_dir=download_dir,
                         multilayer_feature=multilayer_feature,
                         multilayer_cross_feature=multilayer_cross_feature,
+                        layer=layer,
                     )
                 )
                 if multilayer_cross_feature:
